@@ -2,10 +2,13 @@ package coretest
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"io/ioutil"
 	"os"
 	"os/exec"
+	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -285,6 +288,88 @@ func servicesDisabled(units []string) error {
 			}
 		}
 	}
+	return nil
+}
+
+// TestRHCOSGrowpart tests wheter rhcos-growpart was run successfully by checking
+// whether rhcos-growpart.service was run and exited normally and root partition is >= 8GB.
+func TestRHCOSGrowpart() error {
+	// check that rhcos-growpart.service was run and exited normally
+	execMainStatus, err := systemctlShow("ExecMainStatus", "rhcos-growpart.service")
+	if err != nil {
+		return err
+	}
+	if execMainStatus != "0" {
+		return fmt.Errorf("rhcos-growpart.service did not have exit code 0, ExecMainStatus: %s", execMainStatus)
+	}
+	execMainPID, err := systemctlShow("ExecMainPID", "rhcos-growpart.service")
+	if err != nil {
+		return err
+	}
+	if execMainPID == "0" {
+		return fmt.Errorf("rhcos-growpart.service was not found")
+	}
+
+	// check that root partition is >= 8 GB
+	c := exec.Command("df", "/sysroot")
+	out, err := c.Output()
+	if err != nil {
+		return fmt.Errorf("Err: %s\n Out: %v", err, out)
+	}
+	dfOutput := strings.Split(string(out), "\n")
+	// verify header is as expected
+	if len(dfOutput) < 2 {
+		return fmt.Errorf("Expected at least two lines of df output: %q", out)
+	}
+	headerRegex := `Filesystem\s+1K-blocks\s+Used\s+Available\s+Use%\s+Mounted on`
+	if !regexp.MustCompile(headerRegex).MatchString(dfOutput[0]) {
+		return fmt.Errorf("df output has changed format: %q", dfOutput[0])
+	}
+	properties := strings.Fields(dfOutput[1])
+	if len(properties) != 6 {
+		return fmt.Errorf("Unexpected number of properties in df output: %q", dfOutput[0])
+	}
+	numBlocks, err := strconv.Atoi(properties[1])
+	if err != nil {
+		return fmt.Errorf("Error converting root partition size from string to int: %s", err)
+	}
+	// 8 GB is 8388608 1K-blocks
+	if numBlocks < 8388608 {
+		return fmt.Errorf("Root partition size is less than 8GB, size in 1K-blocks: %d", numBlocks)
+	}
+
+	return nil
+}
+
+func systemctlShow(property string, service string) (string, error) {
+	c := exec.Command("systemctl", "show", "-p", property, "--value", service)
+	out, err := c.Output()
+	if err != nil {
+		return "", fmt.Errorf("Err: %s\n Out: %v", err, out)
+	}
+	result := strings.TrimRight(string(out), "\n")
+	return result, nil
+}
+
+// TestCoreOSGrowpart tests that coreos-growpart was run successfully by checking
+// whether ignition-ostree-growfs.service was run and exited normally.
+func TestCoreOSGrowpart() error {
+	c := exec.Command("journalctl", "-o", "json", "MESSAGE_ID=9d1aaa27d60140bd96365438aad20286",
+		"UNIT=ignition-ostree-growfs.service")
+	out, err := c.Output()
+	if err != nil {
+		return fmt.Errorf("Err: %s\n Out: %v", err, out)
+	}
+
+	var journalOutput map[string]string
+	if err := json.Unmarshal(out, &journalOutput); err != nil {
+		return fmt.Errorf("Error getting journalclt output for ignition-ostree-growfs.service\n Err: %s", err)
+	}
+	if journalOutput["JOB_RESULT"] != "done" {
+		return fmt.Errorf("ignition-ostree-growfs.service did not run successfully, journalctl output:\n %q",
+			out)
+	}
+
 	return nil
 }
 
