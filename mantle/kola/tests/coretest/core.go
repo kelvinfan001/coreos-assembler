@@ -54,6 +54,8 @@ func init() {
 			"ReadOnly":       register.CreateNativeFuncWrap(TestReadOnlyFs),
 			"Useradd":        register.CreateNativeFuncWrap(TestUseradd),
 			"MachineID":      register.CreateNativeFuncWrap(TestMachineID),
+			"RHCOSGrowpart":  register.CreateNativeFuncWrap(TestRHCOSGrowpart, []string{"fcos"}...),
+			"CoreOSGrowpart": register.CreateNativeFuncWrap(TestCoreOSGrowpart, []string{"rhcos"}...),
 		},
 	})
 	// TODO: Enable DockerPing/DockerEcho once fixed
@@ -291,8 +293,8 @@ func servicesDisabled(units []string) error {
 	return nil
 }
 
-// TestRHCOSGrowpart tests wheter rhcos-growpart was run successfully by checking
-// whether rhcos-growpart.service was run and exited normally and root partition is >= 8GB.
+// TestRHCOSGrowpart tests whether rhcos-growpart was run successfully by checking
+// whether rhcos-growpart.service exited normally and root partition is >= 8 GB.
 func TestRHCOSGrowpart() error {
 	// check that rhcos-growpart.service was run and exited normally
 	execMainStatus, err := systemctlShow("ExecMainStatus", "rhcos-growpart.service")
@@ -300,7 +302,7 @@ func TestRHCOSGrowpart() error {
 		return err
 	}
 	if execMainStatus != "0" {
-		return fmt.Errorf("rhcos-growpart.service did not have exit code 0, ExecMainStatus: %s", execMainStatus)
+		return fmt.Errorf("rhcos-growpart.service did not have exit code 0\n ExecMainStatus: %s", execMainStatus)
 	}
 	execMainPID, err := systemctlShow("ExecMainPID", "rhcos-growpart.service")
 	if err != nil {
@@ -335,7 +337,7 @@ func TestRHCOSGrowpart() error {
 	}
 	// 8 GB is 8388608 1K-blocks
 	if numBlocks < 8388608 {
-		return fmt.Errorf("Root partition size is less than 8GB, size in 1K-blocks: %d", numBlocks)
+		return fmt.Errorf("Root partition size is less than 8 GB, size in 1K-blocks: %d", numBlocks)
 	}
 
 	return nil
@@ -352,7 +354,7 @@ func systemctlShow(property string, service string) (string, error) {
 }
 
 // TestCoreOSGrowpart tests that coreos-growpart was run successfully by checking
-// whether ignition-ostree-growfs.service was run and exited normally.
+// whether ignition-ostree-growfs.service exited normally.
 func TestCoreOSGrowpart() error {
 	c := exec.Command("journalctl", "-o", "json", "MESSAGE_ID=9d1aaa27d60140bd96365438aad20286",
 		"UNIT=ignition-ostree-growfs.service")
@@ -363,11 +365,10 @@ func TestCoreOSGrowpart() error {
 
 	var journalOutput map[string]string
 	if err := json.Unmarshal(out, &journalOutput); err != nil {
-		return fmt.Errorf("Error getting journalclt output for ignition-ostree-growfs.service\n Err: %s", err)
+		return fmt.Errorf("Error getting journalclt output for ignition-ostree-growfs.service: %s", err)
 	}
 	if journalOutput["JOB_RESULT"] != "done" {
-		return fmt.Errorf("ignition-ostree-growfs.service did not run successfully, journalctl output:\n %q",
-			out)
+		return fmt.Errorf("ignition-ostree-growfs.service did not run successfully\n Journalctl output: %q", out)
 	}
 
 	return nil
